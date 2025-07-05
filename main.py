@@ -1,13 +1,16 @@
 import os
-from pathlib import Path
+from dotenv import load_dotenv
 from typing import List, Dict
 from openai import AzureOpenAI
 
-# Initialize Azure OpenAI client
+# Load environment variables from .env file
+load_dotenv()
+
+# Initialize Azure OpenAI client with values from environment variables
 client = AzureOpenAI(
-    api_key="CbWOuXFCWVtR6SyBwzWHnIYTe7uygJ4rgvQ9RSXQMXWpXdEFfE8TJQQJ99BFACHYHv6XJ3w3AAAAACOGrl6A",
-    azure_endpoint="https://art58-mc2ebpsq-eastus2.cognitiveservices.azure.com/",
-    api_version="2024-12-01-preview"
+    api_key=os.getenv("AZURE_OPENAI_API_KEY"),
+    azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT"),
+    api_version=os.getenv("AZURE_OPENAI_API_VERSION")
 )
 
 SUPPORTED_EXTENSIONS = {
