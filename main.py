@@ -1,7 +1,10 @@
 import os
+import tempfile
 from dotenv import load_dotenv
 from typing import List, Dict
 from openai import AzureOpenAI
+from pathlib import Path
+from git import Repo  # GitPython
 
 # Load environment variables from .env file
 load_dotenv()
@@ -28,9 +31,10 @@ with open("prompts/file_summary.txt", "r", encoding="utf-8") as f:
 with open("prompts/readme_and_diagram.txt", "r", encoding="utf-8") as f:
     README_AND_DIAGRAM_PROMPT = f.read()
 
-# === Code Commenting Phase ===
+
 def get_all_code_files(directory: str, extensions: set) -> List[Path]:
     return [p for p in Path(directory).rglob("*") if p.suffix in extensions]
+
 
 def comment_code_with_openai(code: str) -> str:
     response = client.chat.completions.create(
@@ -42,12 +46,14 @@ def comment_code_with_openai(code: str) -> str:
     )
     return response.choices[0].message.content
 
+
 def overwrite_commented_code(file_path: Path, commented_code: str):
     with open(file_path, 'w', encoding='utf-8') as f:
         f.write(commented_code)
 
-def comment_all_code_files():
-    code_files = get_all_code_files(".", SUPPORTED_EXTENSIONS)
+
+def comment_all_code_files(base_dir: str):
+    code_files = get_all_code_files(base_dir, SUPPORTED_EXTENSIONS)
     print(f"Found {len(code_files)} code files to comment.")
     for file_path in code_files:
         print(f"Commenting {file_path}...")
@@ -57,8 +63,8 @@ def comment_all_code_files():
             overwrite_commented_code(file_path, commented_code)
         except Exception as e:
             print(f"Error processing {file_path.name}: {e}")
-            
-# === README Generation Phase ===
+
+
 def get_all_folder_code_files(base_dir: str) -> Dict[Path, List[Path]]:
     file_map = {}
     for path in Path(base_dir).rglob("*"):
@@ -66,6 +72,7 @@ def get_all_folder_code_files(base_dir: str) -> Dict[Path, List[Path]]:
             parent = path.parent
             file_map.setdefault(parent, []).append(path)
     return file_map
+
 
 def summarize_code_file(file_path: Path) -> str:
     code = file_path.read_text(encoding="utf-8")
@@ -78,6 +85,7 @@ def summarize_code_file(file_path: Path) -> str:
     )
     return response.choices[0].message.content.strip()
 
+
 def generate_readme_from_summaries(file_summaries: Dict[str, str]) -> str:
     summary_text = "\n".join([f"{filename}: {summary}" for filename, summary in file_summaries.items()])
     response = client.chat.completions.create(
@@ -89,13 +97,15 @@ def generate_readme_from_summaries(file_summaries: Dict[str, str]) -> str:
     )
     return response.choices[0].message.content.strip()
 
+
 def write_readme(folder: Path, readme_content: str):
     readme_path = folder / "README.md"
     with open(readme_path, "w", encoding="utf-8") as f:
         f.write(readme_content)
 
-def generate_readmes():
-    folder_files = get_all_folder_code_files(".")
+
+def generate_readmes(base_dir: str):
+    folder_files = get_all_folder_code_files(base_dir)
     for folder, files in folder_files.items():
         readme_path = folder / "README.md"
         if len(files) < 2:
@@ -121,7 +131,40 @@ def generate_readmes():
         except Exception as e:
             print(f"Failed to generate README for {folder}: {e}")
 
-# === Unified Execution ===
+
+def process_repo(repo_url: str):
+    with tempfile.TemporaryDirectory() as temp_dir:
+        print(f"Cloning into temporary directory: {temp_dir}")
+        repo = Repo.clone_from(repo_url, temp_dir)
+        branch_name = "autocomment-branch"
+
+        # Create and checkout new branch
+        new_branch = repo.create_head(branch_name)
+        new_branch.checkout()
+        print(f"Checked out new branch: {branch_name}")
+
+        # Run modifications
+        comment_all_code_files(temp_dir)
+        generate_readmes(temp_dir)
+
+        # Stage and commit
+        repo.git.add(A=True)
+        repo.index.commit("Add auto-generated comments and README files")
+        print(f"Committed changes to branch '{branch_name}'.")
+
+        # Push to remote
+        origin = repo.remote(name='origin')
+        try:
+            origin.push(refspec=f"{branch_name}:{branch_name}")
+            print(f"✅ Branch '{branch_name}' pushed to remote.")
+        except Exception as e:
+            print(f"❌ Failed to push branch: {e}")
+
+
 if __name__ == "__main__":
-    comment_all_code_files()
-    generate_readmes()
+    import sys
+    if len(sys.argv) != 2:
+        print("Usage: python script.py <repo_url>")
+    else:
+        repo_url = sys.argv[1]
+        process_repo(repo_url)
