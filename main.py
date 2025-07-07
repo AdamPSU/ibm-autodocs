@@ -6,10 +6,10 @@ from openai import AzureOpenAI
 from pathlib import Path
 from git import Repo  # GitPython
 
-# Load environment variables from .env file
+# Load environment variables (e.g., AZURE_OPENAI_API_KEY) from .env into os.environ
 load_dotenv()
 
-# Initialize Azure OpenAI client with values from environment variables
+# Initialize Azure OpenAI client using credentials/config from environment variables
 client = AzureOpenAI(
     api_key=os.getenv("AZURE_OPENAI_API_KEY"),
     azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT"),
@@ -22,6 +22,7 @@ SUPPORTED_EXTENSIONS = {
     ".ps1", ".lua", ".pl", ".r", ".jl", ".sql", ".xml", ".json", ".yml", ".yaml"
 }
 
+# Prompt templates loaded from disk; used to steer the AI's behavior
 with open("prompts/system_comment.txt", "r", encoding="utf-8") as f:
     SYSTEM_COMMENT_PROMPT = f.read()
 
@@ -33,10 +34,19 @@ with open("prompts/readme_and_diagram.txt", "r", encoding="utf-8") as f:
 
 
 def get_all_code_files(directory: str, extensions: set) -> List[Path]:
+    """
+    Recursively collect all files under 'directory' whose suffix is in 'extensions'.
+    Returns a list of pathlib.Path objects.
+    """
     return [p for p in Path(directory).rglob("*") if p.suffix in extensions]
 
 
 def comment_code_with_openai(code: str) -> str:
+    """
+    Send the raw code to the Azure OpenAI chat completion API with a system prompt
+    instructing it to add helpful comments without altering logic.
+    Returns the commented code as a string.
+    """
     response = client.chat.completions.create(
         model="o4-mini",
         messages=[
@@ -44,15 +54,22 @@ def comment_code_with_openai(code: str) -> str:
             {"role": "user", "content": f"Add helpful comments to the following code without changing it:\n\n{code}"}
         ],
     )
+    # Extract the assistant's message containing the commented code
     return response.choices[0].message.content
 
 
 def overwrite_commented_code(file_path: Path, commented_code: str):
+    """
+    Overwrite the original file at 'file_path' with the AI-generated 'commented_code'.
+    """
     with open(file_path, 'w', encoding='utf-8') as f:
         f.write(commented_code)
 
 
 def comment_all_code_files(base_dir: str):
+    """
+    Find all supported code files under 'base_dir' and apply AI-generated comments in place.
+    """
     code_files = get_all_code_files(base_dir, SUPPORTED_EXTENSIONS)
     print(f"Found {len(code_files)} code files to comment.")
     for file_path in code_files:
@@ -62,11 +79,16 @@ def comment_all_code_files(base_dir: str):
             commented_code = comment_code_with_openai(code)
             overwrite_commented_code(file_path, commented_code)
         except Exception as e:
+            # Log any errors per-file but continue processing others
             print(f"Error processing {file_path.name}: {e}")
 
 
 def get_all_folder_code_files(base_dir: str) -> Dict[Path, List[Path]]:
-    file_map = {}
+    """
+    Build a mapping: each folder Path -> list of code file Paths directly or indirectly under it.
+    Only includes files whose extensions are in SUPPORTED_EXTENSIONS.
+    """
+    file_map: Dict[Path, List[Path]] = {}
     for path in Path(base_dir).rglob("*"):
         if path.is_file() and path.suffix in SUPPORTED_EXTENSIONS:
             parent = path.parent
@@ -75,6 +97,9 @@ def get_all_folder_code_files(base_dir: str) -> Dict[Path, List[Path]]:
 
 
 def summarize_code_file(file_path: Path) -> str:
+    """
+    Read the code file, send it to the AI with a "summarize" prompt, and return the summary.
+    """
     code = file_path.read_text(encoding="utf-8")
     response = client.chat.completions.create(
         model="o4-mini",
@@ -87,24 +112,36 @@ def summarize_code_file(file_path: Path) -> str:
 
 
 def generate_readme_from_summaries(file_summaries: Dict[str, str]) -> str:
+    """
+    Combine individual file summaries into a single prompt, send to AI to generate
+    a README (and optional diagram), and return the generated content.
+    """
     summary_text = "\n".join([f"{filename}: {summary}" for filename, summary in file_summaries.items()])
     response = client.chat.completions.create(
         model="o4-mini",
         messages=[
             {"role": "system", "content": README_AND_DIAGRAM_PROMPT},
-            {"role": "user", "content": f"{summary_text}"}
+            {"role": "user", "content": summary_text}
         ],
     )
     return response.choices[0].message.content.strip()
 
 
 def write_readme(folder: Path, readme_content: str):
+    """
+    Write the 'readme_content' string to a README.md file inside 'folder'.
+    """
     readme_path = folder / "README.md"
     with open(readme_path, "w", encoding="utf-8") as f:
         f.write(readme_content)
 
 
 def generate_readmes(base_dir: str):
+    """
+    For each folder under 'base_dir' containing 2+ code files and no existing README.md,
+    summarize the files and generate a new README via the AI. Skip folders with <2 files
+    or already containing a README.
+    """
     folder_files = get_all_folder_code_files(base_dir)
     for folder, files in folder_files.items():
         readme_path = folder / "README.md"
@@ -116,7 +153,7 @@ def generate_readmes(base_dir: str):
             continue
 
         print(f"Generating README for {folder}...")
-        file_summaries = {}
+        file_summaries: Dict[str, str] = {}
         for file_path in files:
             try:
                 summary = summarize_code_file(file_path)
@@ -133,26 +170,31 @@ def generate_readmes(base_dir: str):
 
 
 def process_repo(repo_url: str):
+    """
+    Clone the git repository at 'repo_url' into a temporary directory, create a new
+    branch, apply code commenting and README generation, then commit and push changes
+    back to the remote under branch 'autocomment-branch'.
+    """
     with tempfile.TemporaryDirectory() as temp_dir:
         print(f"Cloning into temporary directory: {temp_dir}")
         repo = Repo.clone_from(repo_url, temp_dir)
         branch_name = "autocomment-branch"
 
-        # Create and checkout new branch
+        # Create and switch to a new branch for our changes
         new_branch = repo.create_head(branch_name)
         new_branch.checkout()
         print(f"Checked out new branch: {branch_name}")
 
-        # Run modifications
+        # Apply automated commenting and readme generation
         comment_all_code_files(temp_dir)
         generate_readmes(temp_dir)
 
-        # Stage and commit
+        # Stage all changes and commit
         repo.git.add(A=True)
         repo.index.commit("Add auto-generated comments and README files")
         print(f"Committed changes to branch '{branch_name}'.")
 
-        # Push to remote
+        # Push the new branch back to the origin remote
         origin = repo.remote(name='origin')
         try:
             origin.push(refspec=f"{branch_name}:{branch_name}")
