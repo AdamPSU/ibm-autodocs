@@ -1,3 +1,4 @@
-openai
-GitPython
+azure-functions
 python-dotenv
+openai
+Git-Python

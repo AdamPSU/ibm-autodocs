@@ -21,7 +21,7 @@ llm = AzureChatOpenAI(
     deployment_name=os.getenv("AZURE_OPENAI_DEPLOYMENT")
 )
 
-SUPPORTED_EXTENSIONS = {
+SUPPORTED_EXTENSIONS = {    
     ".py", ".js", ".ts", ".java", ".cpp", ".c", ".cs", ".rb", ".go", ".rs",
     ".php", ".html", ".css", ".scss", ".swift", ".kt", ".m", ".sh", ".bat",
     ".ps1", ".lua", ".pl", ".r", ".jl", ".sql", ".xml", ".json",
@@ -42,7 +42,8 @@ readme_template = PromptTemplate(
     input_variables=["file_summaries"],
     template="""The following is a set of summaries:
 {file_summaries}
-Take these and distill it into a final, consolidated README of the main themes."""
+Take these and distill it into a final, consolidated README of the main themes.
+Include clickable links to the most relevant files in the README."""
 )
 
 comment_chain = comment_template | llm | StrOutputParser()
@@ -138,16 +139,8 @@ def process_repo(repo_url: str):
     origin = repo.remote(name='origin')
     try:
         origin.push(refspec=f"{branch_name}:{branch_name}")
-        print(f"✅ Branch '{branch_name}' pushed to remote.")
+        print(f"Branch '{branch_name}' pushed to remote.")
     except Exception as e:
-        print(f"❌ Failed to push branch: {e}")
+        print(f"Failed to push branch: {e}")
 
     repo.close()
-
-if __name__ == "__main__":
-    import sys
-    if len(sys.argv) != 2:
-        print("Usage: python script.py <repo_url>")
-    else:
-        repo_url = sys.argv[1]
-        process_repo(repo_url)
