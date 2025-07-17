@@ -2,3 +2,5 @@ azure-functions
 python-dotenv
 openai
 Git-Python
+langchain_core
+langchain_openai
